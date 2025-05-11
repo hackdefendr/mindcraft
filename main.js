@@ -6,61 +6,85 @@ import { createMindServer } from './src/server/mind_server.js';
 import { mainProxy } from './src/process/main_proxy.js';
 import { readFileSync } from 'fs';
 import readline from 'readline';
+import './src/agent/commands/index.js';
+import { actionsList as builtinCommands } from './src/agent/commands/actions.js';
 
-// Map for quick bot/agent lookup by name
 const agentsByName = new Map();
 
-/**
- * Parse command line arguments using yargs.
- * Accepts:
- *   --profiles: Array of profile file paths
- *   --task_path: String path to task file
- *   --task_id: String id of the task
- */
 function parseArguments() {
     return yargs(hideBin(process.argv))
-        .option('profiles', {
-            type: 'array',
-            describe: 'List of agent profile paths',
-        })
-        .option('task_path', {
-            type: 'string',
-            describe: 'Path to task file to execute'
-        })
-        .option('task_id', {
-            type: 'string',
-            describe: 'Task ID to execute'
-        })
+        .option('profiles', { type: 'array', describe: 'List of agent profile paths' })
+        .option('task_path', { type: 'string', describe: 'Path to task file to execute' })
+        .option('task_id', { type: 'string', describe: 'Task ID to execute' })
         .help()
         .alias('help', 'h')
         .parse();
 }
-
-/**
- * Determine which agent profile files to load.
- * Preference to CLI argument, fallback to settings.
- */
 function getProfiles(args) {
     return args.profiles || settings.profiles || [];
 }
 
-/**
- * Main entrypoint.
- * - Optionally starts the mindserver if enabled in settings.
- * - Parses agent profiles.
- * - Loads and starts agents.
- * - Exposes minimal CLI for managing and interacting with agents ("bots").
- */
+// ==== COMMAND HANDLER CONSTRUCTION ====
+
+function buildCliCommands(agentsByName) {
+    // Legacy or wrapper commands not in builtinCommands
+    const cliLegacy = {};
+
+    // HELP is always present and auto-generated
+    cliLegacy.help = {
+        description: "Show this help message.",
+        usage: "!help or !?",
+        aliases: ["?", "h"],
+        handler: (ctx) => {
+            const allCommands = Object.entries(ctx.commands)
+                .map(([name, cmd]) => {
+                    let usage = cmd.usage ? cmd.usage : `!${name}`;
+                    let desc  = cmd.description || '';
+                    return `  ${usage.padEnd(30)}${desc}`;
+                })
+                .join('\n');
+            console.log('Available commands:\n------------------\n' + allCommands);
+        }
+    };
+    cliLegacy.exit = {
+        description: "Exit the program.",
+        usage: "!exit",
+        aliases: ['quit'],
+        handler: (ctx) => {
+            console.log('Exiting...');
+            process.exit(0);
+        }
+    };
+
+    // Optionally, you can merge/override any commands.
+    return { ...builtinCommands, ...cliLegacy };
+}
+
+// Parse input for command and args
+function parseCommand(line) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('!')) return null;
+    const [cmd, ...args] = trimmed.slice(1).split(' ');
+    return { cmd: cmd.toLowerCase(), args };
+}
+
+// Try to resolve alias to real name
+function resolveCommand(cmd, commands) {
+    for (const [name, obj] of Object.entries(commands)) {
+        if (name === cmd) return name;
+        if (obj.aliases && obj.aliases.includes(cmd)) return name;
+    }
+    return null;
+}
+
+// ==== MAIN ====
+
 async function main() {
-    // Start mind server, if configured
     if (settings.host_mindserver) {
         createMindServer(settings.mindserver_port);
     }
-
-    // Connect main proxy (used for communication/registration)
     mainProxy.connect();
 
-    // Parse command-line args and determine profiles to load
     const args = parseArguments();
     const profiles = getProfiles(args);
 
@@ -70,9 +94,8 @@ async function main() {
     }
 
     console.log('Loading agent profiles:', profiles);
-    const { load_memory, init_message } = settings;
 
-    // Load and start each agent process
+    const { load_memory, init_message } = settings;
     for (let i = 0; i < profiles.length; i++) {
         let agent_process = new AgentProcess();
         let profileData;
@@ -91,11 +114,9 @@ async function main() {
             continue;
         }
 
-        // Register with main proxy and in agentsByName map for CLI access
         mainProxy.registerAgent(agent_json.name, agent_process);
         agentsByName.set(agent_json.name, agent_process);
 
-        // Start the agent process
         try {
             agent_process.start(
                 profiles[i],
@@ -105,7 +126,6 @@ async function main() {
                 args.task_path,
                 args.task_id
             );
-            // Allow some time for startup/registration
             await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (err) {
             console.error(`Failed to start agent "${agent_json.name}":`, err);
@@ -113,92 +133,52 @@ async function main() {
     }
 
     // ==== COMMAND LINE INTERFACE ====
+    const commands = buildCliCommands(agentsByName);
+
+    // Context passed to each command handler
+    const context = {
+        agentsByName,
+        commands,
+        mainProxy,
+        settings
+    };
+
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
         prompt: '> '
     });
 
-    /**
-     * Prints help information to stdout for CLI usage.
-     */
-    function printHelp() {
-        console.log(`
-Available commands:
---------------------
-/help                        Show this help message
-/list                        List all loaded bots
-/say <bot> <message>         Make <bot> say <message> to other players
-/exit                        Exit program
-`);
-    }
+    // Auto-print help on start
+    commands.help.handler(context);
 
-    printHelp();
     rl.prompt();
 
     rl.on('line', async (line) => {
-        const trimmed = line.trim();
-
-        if (trimmed === '' || trimmed === '\n') {
+        const cmdParsed = parseCommand(line);
+        if (!cmdParsed) {
             rl.prompt();
             return;
         }
-
-        if (trimmed.startsWith('/help')) {
-            printHelp();
-        } else if (trimmed.startsWith('/list')) {
-            if (agentsByName.size === 0) {
-                console.log('No bots loaded.');
-            } else {
-                console.log('Loaded bots:', Array.from(agentsByName.keys()).join(', '));
-            }
-        } else if (trimmed.startsWith('/say')) {
-            // Split into: '/say', botname, rest (message)
-            const parts = trimmed.split(' ');
-            if (parts.length < 3) {
-                console.log('Usage: /say <bot> <message>');
-            } else {
-                const bot = parts[1];
-                const msg = parts.slice(2).join(' ');
-                if (!agentsByName.has(bot)) {
-                    console.log(`Bot not found: ${bot}`);
-                } else {
-                    const agent = agentsByName.get(bot);
-                    // Try to call appropriate method to make agent say something
-                    if (typeof agent.sendMessageToPlayers === 'function') {
-                        try {
-                            await agent.sendMessageToPlayers(msg);
-                            console.log(`Bot "${bot}" says to players: "${msg}"`);
-                        } catch (err) {
-                            console.error(`Failed to send message:`, err);
-                        }
-                    } else if (typeof agent.sendMessage === 'function') {
-                        // Fallback if alternate method exists
-                        try {
-                            await agent.sendMessage(msg);
-                            console.log(`Bot "${bot}" says: "${msg}"`);
-                        } catch (err) {
-                            console.error(`Failed to send message:`, err);
-                        }
-                    } else {
-                        console.log(`Cannot send message: Agent process does not support .sendMessageToPlayers(msg)`);
-                    }
-                }
-            }
-        } else if (trimmed.startsWith('/exit')) {
-            console.log('Exiting...');
-            rl.close();
-            // Optionally, you may want to clean up agent processes here
-            process.exit(0);
-        } else {
-            console.log('Unknown command, type /help for options.');
+        const { cmd, args } = cmdParsed;
+        const commandName = resolveCommand(cmd, commands);
+        if (!commandName) {
+            console.log('Unknown command, type !help for options.');
+            rl.prompt();
+            return;
+        }
+        // Call handler, pass context and args
+        try {
+            // Support async or sync handlers
+            await Promise.resolve(commands[commandName].handler(context, ...args));
+        } catch (err) {
+            console.error('Command error:', err);
         }
         rl.prompt();
     });
 
     rl.on('close', () => {
         console.log('CLI closed.');
-        // Optional: clean up any running agent processes here
         process.exit(0);
     });
 }
