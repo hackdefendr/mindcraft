@@ -4,13 +4,13 @@ export class Local {
     constructor(model_name, url, params) {
         this.model_name = model_name;
         this.params = params;
-        this.url = url || 'http://127.0.0.1:11434';
+        this.url = url || 'http://10.71.1.188:1234';
         this.chat_endpoint = '/api/chat';
         this.embedding_endpoint = '/api/embeddings';
     }
 
     async sendRequest(turns, systemMessage) {
-        let model = this.model_name || 'llama3.1'; // Updated to llama3.1, as it is more performant than llama3
+        let model = this.model_name || 'qwen3:4b'; // Updated to llama3.1, as it is more performant than llama3
         let messages = strictFormat(turns);
         messages.unshift({ role: 'system', content: systemMessage });
         
