@@ -24,13 +24,27 @@ function getProfiles(args) {
     return args.profiles || settings.profiles || [];
 }
 
+/**
+ * Convert an array of action objects ({name, handler, ...})
+ * to a map { [name]: obj }
+ * @param {Array|Object} actions
+ */
+function toCommandMap(actions) {
+    if (!actions) return {};
+    if (!Array.isArray(actions)) return { ...actions };
+    const out = {};
+    for (const obj of actions) {
+        if (obj && obj.name) out[obj.name.toLowerCase()] = obj;
+    }
+    return out;
+}
+
 // ==== COMMAND HANDLER CONSTRUCTION ====
 
 function buildCliCommands(agentsByName) {
     // Legacy or wrapper commands not in builtinCommands
     const cliLegacy = {};
 
-    // HELP command: Show all commands and their descriptions
     cliLegacy.help = {
         description: "Show this help message.",
         usage: "!help or !?",
@@ -39,9 +53,10 @@ function buildCliCommands(agentsByName) {
             const allCommands = Object.entries(context.commands)
                 .map(([name, cmd]) => {
                     let desc = cmd.description || "";
-                    // Optional: show aliases
-                    // let aliasStr = cmd.aliases && cmd.aliases.length ? ` (aliases: ${cmd.aliases.join(', ')})` : '';
-                    return `  ${name.padEnd(16)}${desc}`;
+                    // Optionally show aliases
+                    const aliasStr = cmd.aliases && cmd.aliases.length
+                        ? ` (aliases: ${cmd.aliases.join(', ')})` : '';
+                    return `  ${name.padEnd(16)}${desc}${aliasStr}`;
                 })
                 .join('\n');
             console.log('Available commands:\n------------------\n' + allCommands);
@@ -52,29 +67,19 @@ function buildCliCommands(agentsByName) {
         description: "Exit the program.",
         usage: "!exit",
         aliases: ['quit'],
-        handler: (ctx) => {
+        handler: () => {
             console.log('Exiting...');
             process.exit(0);
         }
     };
 
-    // Make sure builtinCommands is an object: { actionName: commandObj, ... }
-    // If it's an array, convert it:
-    let builtins = builtinCommands;
-    if (Array.isArray(builtinCommands)) {
-        // If actionsList was "export const actionsList = [ { name, handler, ... }, ... ]"
-        // Convert to object { [name]: obj, ... }
-        builtins = {};
-        for (const obj of builtinCommands) {
-            if (obj && obj.name) builtins[obj.name] = obj;
-        }
-    }
+    // ### CORRECTION: ALWAYS use toCommandMap!
+    const builtins = toCommandMap(builtinCommands);
 
-    // Optionally, you can merge/override any commands.
+    // Optionally, override or extend builtins with CLI-specific commands
     return { ...builtins, ...cliLegacy };
 }
 
-// Parse input for command and args
 function parseCommand(line) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('!')) return null;
@@ -82,11 +87,15 @@ function parseCommand(line) {
     return { cmd: cmd.toLowerCase(), args };
 }
 
-// Try to resolve alias to real name
+/**
+ * Try to resolve alias to real name.
+ * Now case-insensitive!
+ */
 function resolveCommand(cmd, commands) {
+    const arg = cmd.toLowerCase();
     for (const [name, obj] of Object.entries(commands)) {
-        if (name === cmd) return name;
-        if (obj.aliases && obj.aliases.includes(cmd)) return name;
+        if (name === arg) return name;
+        if (obj.aliases && obj.aliases.map(a => a.toLowerCase()).includes(arg)) return name;
     }
     return null;
 }
@@ -181,10 +190,10 @@ async function main() {
             rl.prompt();
             return;
         }
-        // Call handler, pass context and args
         try {
-            // Support async or sync handlers
-            await Promise.resolve(commands[commandName].handler(context, ...args));
+            const handler = commands[commandName].handler;
+            if (!handler) throw new Error(`No handler for command "${commandName}"`);
+            await Promise.resolve(handler(context, ...args));
         } catch (err) {
             console.error('Command error:', err);
         }
