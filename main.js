@@ -35,8 +35,8 @@ function buildCliCommands(agentsByName) {
         description: "Show this help message.",
         usage: "!help or !?",
         aliases: ["?", "h"],
-        handler: (ctx) => {
-            const allCommands = Object.entries(ctx.commands)
+        handler: (name) => {
+            const allCommands = Object.entries(name.commands)
                 .map(([name, cmd]) => {
                     let usage = cmd.usage ? cmd.usage : `!${name}`;
                     let desc  = cmd.description || '';
