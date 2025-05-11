@@ -30,22 +30,24 @@ function buildCliCommands(agentsByName) {
     // Legacy or wrapper commands not in builtinCommands
     const cliLegacy = {};
 
-    // HELP is always present and auto-generated
+    // HELP command: Show all commands and their descriptions
     cliLegacy.help = {
         description: "Show this help message.",
         usage: "!help or !?",
         aliases: ["?", "h"],
-        handler: (name) => {
-            const allCommands = Object.entries(name.commands)
+        handler: (context) => {
+            const allCommands = Object.entries(context.commands)
                 .map(([name, cmd]) => {
-                    let usage = cmd.usage ? cmd.usage : `!${name}`;
-                    let desc  = cmd.description || '';
-                    return `  ${usage.padEnd(30)}${desc}`;
+                    let desc = cmd.description || "";
+                    // Optional: show aliases
+                    // let aliasStr = cmd.aliases && cmd.aliases.length ? ` (aliases: ${cmd.aliases.join(', ')})` : '';
+                    return `  ${name.padEnd(16)}${desc}`;
                 })
                 .join('\n');
             console.log('Available commands:\n------------------\n' + allCommands);
         }
     };
+
     cliLegacy.exit = {
         description: "Exit the program.",
         usage: "!exit",
@@ -56,8 +58,20 @@ function buildCliCommands(agentsByName) {
         }
     };
 
+    // Make sure builtinCommands is an object: { actionName: commandObj, ... }
+    // If it's an array, convert it:
+    let builtins = builtinCommands;
+    if (Array.isArray(builtinCommands)) {
+        // If actionsList was "export const actionsList = [ { name, handler, ... }, ... ]"
+        // Convert to object { [name]: obj, ... }
+        builtins = {};
+        for (const obj of builtinCommands) {
+            if (obj && obj.name) builtins[obj.name] = obj;
+        }
+    }
+
     // Optionally, you can merge/override any commands.
-    return { ...builtinCommands, ...cliLegacy };
+    return { ...builtins, ...cliLegacy };
 }
 
 // Parse input for command and args
