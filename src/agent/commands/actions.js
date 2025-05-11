@@ -465,3 +465,19 @@ export const actionsList = [
         })
     },
 ];
+
+/**
+ * Handler to perform an action by name.
+ *
+ * @param {string} commandName - Command string, including the '!' (example: '!followPlayer').
+ * @param  {...any} args - Arguments for the command (agent is always the first).
+ * @returns {Promise<any>} - The result of the action, or an error message.
+ */
+export async function perform(commandName, ...args) {
+    const action = actionsList.find(a => a.name === commandName);
+    if (!action) {
+        // In your CLI you could also emit an event instead here.
+        return `Unknown command, type !help for options.`;
+    }
+    return action.perform(...args);
+}

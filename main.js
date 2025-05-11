@@ -7,7 +7,7 @@ import { mainProxy } from './src/process/main_proxy.js';
 import { readFileSync } from 'fs';
 import readline from 'readline';
 import './src/agent/commands/index.js';
-import { actionsList as builtinCommands } from './src/agent/commands/actions.js';
+import { actionsList, perform } from './src/agent/commands/actions.js';
 
 const agentsByName = new Map();
 
@@ -26,7 +26,10 @@ function getProfiles(args) {
 
 /**
  * Convert an array of action objects ({name, handler, ...})
- * to a map { [name]: obj }
+ * to a map { [name]: obj }.
+ * **CORRECTION:**
+ * If name starts with '!', strip it for key (so keys are "stop", "giveplayer", etc).
+ * This ensures user CLI "!stop" properly maps to "stop" in command map.
  * @param {Array|Object} actions
  */
 function toCommandMap(actions) {
@@ -34,7 +37,11 @@ function toCommandMap(actions) {
     if (!Array.isArray(actions)) return { ...actions };
     const out = {};
     for (const obj of actions) {
-        if (obj && obj.name) out[obj.name.toLowerCase()] = obj;
+        if (obj && obj.name) {
+            // fix: always store key without "!" and lower case
+            let key = obj.name.startsWith('!') ? obj.name.slice(1) : obj.name;
+            out[key.toLowerCase()] = obj;
+        }
     }
     return out;
 }
@@ -56,7 +63,7 @@ function buildCliCommands(agentsByName) {
                     // Optionally show aliases
                     const aliasStr = cmd.aliases && cmd.aliases.length
                         ? ` (aliases: ${cmd.aliases.join(', ')})` : '';
-                    return `  ${name.padEnd(16)}${desc}${aliasStr}`;
+                    return `  !${name.padEnd(15)}${desc}${aliasStr}`;
                 })
                 .join('\n');
             console.log('Available commands:\n------------------\n' + allCommands);
@@ -73,8 +80,8 @@ function buildCliCommands(agentsByName) {
         }
     };
 
-    // ### CORRECTION: ALWAYS use toCommandMap!
-    const builtins = toCommandMap(builtinCommands);
+    // Use corrected toCommandMap (commands are keyed as "stop", "giveplayer", ...)
+    const builtins = toCommandMap(actionsList);
 
     // Optionally, override or extend builtins with CLI-specific commands
     return { ...builtins, ...cliLegacy };
@@ -98,6 +105,19 @@ function resolveCommand(cmd, commands) {
         if (obj.aliases && obj.aliases.map(a => a.toLowerCase()).includes(arg)) return name;
     }
     return null;
+}
+
+function findAction(actionName) {
+    return actionsList.find(a => a.name === actionName);
+}
+
+export async function handleAction(agent, commandName, ...params) {
+    const entry = findAction(commandName);
+    if (!entry || typeof entry.perform !== 'function') {
+        agent.openChat(`Unknown action: ${commandName}`);
+        return;
+    }
+    return await entry.perform(agent, ...params);
 }
 
 // ==== MAIN ====
